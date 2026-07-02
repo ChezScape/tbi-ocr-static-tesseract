@@ -1,8 +1,11 @@
+.nojekyll
 CHANGELOG_v4.12r673.md
+CHANGELOG_v4.12r674.md
 FILES.txt
 README.md
 SHA256SUMS.txt
 TEST_RESULTS_v4.12r673.md
+TEST_RESULTS_v4.12r674.md
 favicon.ico
 index.html
 local-ocr-adapter.js

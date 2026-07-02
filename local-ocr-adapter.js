@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * TBI PACKAGED LOCAL OCR ADAPTER v4.12r673
+ * TBI PACKAGED LOCAL OCR ADAPTER v4.12r674
  *
  * One-source raw + cleaned OCR preview adapter backed by locally packaged Tesseract.js
  * files. This adapter does not batch OCR, does not save Manual Values, does
@@ -18,13 +18,13 @@ import {
 
 const Tesseract = TesseractModule?.default || TesseractModule;
 
-export const TBI_PACKAGED_LOCAL_OCR_ADAPTER_VERSION = "v4.12r673";
+export const TBI_PACKAGED_LOCAL_OCR_ADAPTER_VERSION = "v4.12r674";
 export const TBI_PACKAGED_LOCAL_OCR_ENGINE = Object.freeze({
     name: "TBI packaged Tesseract.js OCR",
     adapter: "local-ocr-adapter.js",
     tesseractJsVersion: "7.0.0",
     language: "eng",
-    mode: "one-source-raw-plus-region-hint-preview-only",
+    mode: "one-source-raw-quality-plus-region-hint-preview-only",
     persistentWrites: false,
     cacheMethod: "none",
     batchOcrActive: false,
@@ -49,22 +49,50 @@ export async function previewRawText(payload = {}) {
     const worker = await getWorker();
     const rawResult = await worker.recognize(safePayload.previewUrl);
     const originalRawText = normaliseOcrText(rawResult?.data?.text || rawResult?.text || rawResult?.rawText || "");
-    const regionPreview = await recogniseGeometryRegions(worker, safePayload, originalRawText);
-    const rawText = mergeRawAndRegionText(originalRawText, regionPreview.regionText, safePayload.source.screenType);
+    const qualityBaseline = await recogniseProcessedBaseline(worker, safePayload);
+    const regionPreview = await recogniseGeometryRegions(worker, safePayload, mergeRawAndRegionText(originalRawText, qualityBaseline.text, safePayload.source.screenType));
+    const rawText = mergeRawAndRegionText(mergeRawAndRegionText(originalRawText, qualityBaseline.text, safePayload.source.screenType), regionPreview.regionText, safePayload.source.screenType);
     return Object.freeze({
         rawText,
         originalRawText,
+        cleanedRawText: qualityBaseline.text,
+        preprocessingStatus: qualityBaseline.status,
         regionText: regionPreview.regionText,
         regionResults: regionPreview.regionResults,
         regionStatus: regionPreview.status,
         regionCount: regionPreview.regionResults.length,
-        bestSource: regionPreview.regionText ? "geometry-regions-plus-raw" : "raw",
+        bestSource: regionPreview.regionText ? "quality-regions-plus-raw" : (qualityBaseline.text ? "quality-plus-raw" : "raw"),
         engine: TBI_PACKAGED_LOCAL_OCR_ENGINE.name,
         adapterVersion: TBI_PACKAGED_LOCAL_OCR_ADAPTER_VERSION,
         source: safePayload.source,
         geometryPlan: createGeometryPlanSummary(safePayload),
         safety: createSafetyFlags()
     });
+}
+
+async function recogniseProcessedBaseline(worker, safePayload = {}) {
+    if (!safePayload.qualityPreprocessRequested) {
+        return Object.freeze({ text: "", status: "runtime-preprocess-skipped" });
+    }
+    let processedUrl = "";
+    let processedUrlOwned = false;
+    try {
+        const processed = await createRuntimePreprocessedImageUrl(safePayload.previewUrl, safePayload.source.screenType);
+        processedUrl = processed?.url || "";
+        processedUrlOwned = Boolean(processed?.objectUrlOwned);
+        if (!processedUrl) return Object.freeze({ text: "", status: processed?.status || "runtime-preprocess-unavailable" });
+        const processedResult = await worker.recognize(processedUrl);
+        return Object.freeze({
+            text: normaliseOcrText(processedResult?.data?.text || processedResult?.text || processedResult?.rawText || ""),
+            status: processed?.status || "runtime-preprocess-ready-temporary-object-url"
+        });
+    } catch (error) {
+        return Object.freeze({ text: "", status: `runtime-preprocess-failed-safely:${normaliseOcrText(error?.message || String(error || "unknown"))}` });
+    } finally {
+        if (processedUrlOwned && processedUrl && typeof globalThis?.URL?.revokeObjectURL === "function") {
+            try { globalThis.URL.revokeObjectURL(processedUrl); } catch (_) { /* temporary URL cleanup best effort */ }
+        }
+    }
 }
 
 export async function previewQualityText(payload = {}) {
@@ -139,7 +167,7 @@ export function getPackagedOcrAdapterStatus() {
     return Object.freeze({
         version: TBI_PACKAGED_LOCAL_OCR_ADAPTER_VERSION,
         owner: "local-ocr-adapter.js",
-        mode: "packaged-local-tesseract-one-source-region-hint-preview",
+        mode: "packaged-local-tesseract-one-source-robust-region-hint-preview",
         engine: TBI_PACKAGED_LOCAL_OCR_ENGINE,
         readyToLoad: true,
         workerCreated: Boolean(workerPromise),
@@ -340,10 +368,8 @@ async function recogniseGeometryRegions(worker, safePayload = {}, originalRawTex
     }
     const regionText = normaliseOcrText(regionResults
         .filter(result => result.text)
-        .map(result => `${result.label || result.id}
-${result.text}`)
-        .join("
-"));
+        .map(result => `${result.label || result.id}\n${result.text}`)
+        .join("\n"));
     return Object.freeze({
         status: regionText ? "region-ocr-text-ready" : "region-ocr-empty",
         regionText,
@@ -357,15 +383,34 @@ function createRuntimeRegionPlan(safePayload = {}, originalRawText = "") {
     const regions = [];
     if (screenType === "target-priority" || /target\s+priority/i.test(originalRawText)) {
         // The full Target Priority modal is noisy: arrows/icons/glow confuse OCR.
-        // Use a child crop of the original screenshot that focuses the text column only.
+        // Use several temporary child crops of the original screenshot so one bad
+        // resolution/aspect/crop does not own the truth. All remain review-only.
         regions.push(Object.freeze({
-            id: "target-priority-text-column-derived",
-            label: "Target Priority row text column",
-            role: "text-region",
-            rect: Object.freeze({ x: 0.32, y: 0.16, w: 0.48, h: 0.78 }),
-            preprocessHints: Object.freeze(["row-labels", "high-contrast-ui-text", "ignore-arrows-icons", "catalogue-match"]),
+            id: "target-priority-title-derived",
+            label: "Target Priority title",
+            role: "title-text-region",
+            rect: Object.freeze({ x: 0.17, y: 0.13, w: 0.58, h: 0.10 }),
+            preprocessHints: Object.freeze(["title", "high-contrast-ui-text", "threshold", "catalogue-match"]),
             coordinateSpace: "normalised-parent-source-image",
-            derivedFrom: "target-priority-row-labels"
+            derivedFrom: "target-priority-title"
+        }));
+        regions.push(Object.freeze({
+            id: "target-priority-text-column-tight-derived",
+            label: "Target Priority row text column tight",
+            role: "text-region",
+            rect: Object.freeze({ x: 0.28, y: 0.20, w: 0.39, h: 0.67 }),
+            preprocessHints: Object.freeze(["row-labels", "high-contrast-ui-text", "threshold", "ignore-arrows-icons", "catalogue-match"]),
+            coordinateSpace: "normalised-parent-source-image",
+            derivedFrom: "target-priority-row-labels-tight"
+        }));
+        regions.push(Object.freeze({
+            id: "target-priority-text-column-wide-derived",
+            label: "Target Priority row text column wide",
+            role: "text-region",
+            rect: Object.freeze({ x: 0.22, y: 0.19, w: 0.55, h: 0.70 }),
+            preprocessHints: Object.freeze(["row-labels", "high-contrast-ui-text", "threshold", "catalogue-match"]),
+            coordinateSpace: "normalised-parent-source-image",
+            derivedFrom: "target-priority-row-labels-wide"
         }));
     }
     for (const region of provided) {
@@ -395,7 +440,8 @@ async function createRegionPreprocessedImageUrl(image, region = {}, screenType =
     const hints = (Array.isArray(region.preprocessHints) ? region.preprocessHints : []).join(" ").toLowerCase();
     const isTargetPriority = String(screenType || "").toLowerCase() === "target-priority" || String(region.id || "").includes("target-priority");
     const scale = isTargetPriority || /row|label|catalogue|small|numeric/.test(hints) ? 3 : 2;
-    const contrast = isTargetPriority ? 2.1 : /numeric|small/.test(hints) ? 1.65 : 1.45;
+    const contrast = isTargetPriority ? 2.25 : /numeric|small/.test(hints) ? 1.65 : 1.45;
+    const threshold = isTargetPriority || /threshold|row-labels|high-contrast/.test(hints);
     const maxDimension = 4096;
     const targetWidth = Math.max(1, Math.min(maxDimension, Math.round(sw * scale)));
     const targetHeight = Math.max(1, Math.min(maxDimension, Math.round(sh * scale)));
@@ -413,7 +459,8 @@ async function createRegionPreprocessedImageUrl(image, region = {}, screenType =
         const factor = (259 * (contrast * 64 + 255)) / (255 * (259 - contrast * 64));
         for (let i = 0; i < data.length; i += 4) {
             const gray = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
-            const boosted = Math.max(0, Math.min(255, Math.round(factor * (gray - 128) + 128)));
+            let boosted = Math.max(0, Math.min(255, Math.round(factor * (gray - 128) + 128)));
+            if (threshold) boosted = boosted >= 142 ? 255 : 0;
             data[i] = boosted;
             data[i + 1] = boosted;
             data[i + 2] = boosted;
@@ -432,11 +479,7 @@ function mergeRawAndRegionText(originalRawText = "", regionText = "", screenType
     const regions = normaliseOcrText(regionText);
     if (!regions) return raw;
     if (!raw) return regions;
-    const screen = String(screenType || "").toLowerCase();
-    if (screen === "target-priority") return normaliseOcrText(`${raw}
-${regions}`);
-    return normaliseOcrText(`${raw}
-${regions}`);
+    return normaliseOcrText(`${raw}\n${regions}`);
 }
 
 function matchExpectedLabels(text = "", expectedLabels = []) {
@@ -452,7 +495,7 @@ function matchExpectedLabels(text = "", expectedLabels = []) {
 function createGeometryPlanSummary(safePayload = {}) {
     const plan = safePayload.geometryPlan || null;
     return Object.freeze({
-        version: plan?.version || "v4.12r673-static-pack-region-runtime",
+        version: plan?.version || "v4.12r674-static-pack-robust-region-runtime",
         familyKey: plan?.familyKey || safePayload.source?.screenType || "unknown",
         familyLabel: plan?.familyLabel || safePayload.source?.screenLabel || "Screenshot",
         coordinateSpace: plan?.coordinateSpace || "normalised-parent-source-image",

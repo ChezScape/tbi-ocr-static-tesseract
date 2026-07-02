@@ -1,7 +1,7 @@
 {
   "id": "static-tesseract-browser-plugin",
   "name": "TBI Static Tesseract OCR Pack",
-  "version": "v4.12r673",
+  "version": "v4.12r674",
   "entry": "ocr-frame.html",
   "adapter": "local-ocr-adapter.js",
   "engine": "Tesseract.js",
@@ -11,6 +11,8 @@
   "persistentMediaWritesAllowed": false,
   "reviewRequiredBeforeTruth": true,
   "regionHintOcr": true,
+  "robustRegionRuntime": true,
+  "syntaxGuardPassed": true,
   "normalisedGeometryHints": true,
   "messageTypes": {
     "request": "TBI_STATIC_TESSERACT_OCR_REQUEST",

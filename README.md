@@ -1,4 +1,4 @@
-# TBI Static Tesseract OCR Pack — v4.12r673
+# TBI Static Tesseract OCR Pack — v4.12r674
 
 This is the optional external OCR pack for Tower Battle Intel.
 
@@ -14,11 +14,19 @@ Then point main TBI's Static OCR Pack provider at:
 https://yourname.github.io/tbi-ocr-static-tesseract/ocr-frame.html
 ```
 
-## r673 region-hint OCR
+## r674 robust region runtime
 
-This pack now honours main TBI's normalised OCR geometry hints. It can crop temporary child regions from the original screenshot at runtime, preprocess those regions, OCR them, and return a combined raw + region preview.
+r674 fixes the r673 `local-ocr-adapter.js` syntax error caused by a broken newline literal in the region OCR merge block. The adapter now passes a Node syntax check before packaging.
 
-Target Priority now gets a focused text-column child region so Tesseract is not distracted by arrows, icons, borders and glow. Crops remain temporary children of the original screenshot and do not become independent truth sources.
+Robustness improvements:
+
+- full screenshot OCR remains the baseline;
+- runtime preprocessed full-image OCR is merged as a second signal;
+- normalised region hints are OCRed as temporary child crops;
+- Target Priority receives title, tight row-label and wide row-label child regions;
+- region crops use higher contrast and thresholding for glowing UI text;
+- crop results remain mapped to the original screenshot and never become independent truth;
+- OCR failures stay safe and return visible status instead of breaking the frame.
 
 Guardrails:
 
