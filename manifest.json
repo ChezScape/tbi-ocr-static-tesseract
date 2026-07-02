@@ -1,0 +1,27 @@
+{
+  "id": "static-tesseract-browser-plugin",
+  "name": "TBI Static Tesseract OCR Pack",
+  "version": "v4.12r673",
+  "entry": "ocr-frame.html",
+  "adapter": "local-ocr-adapter.js",
+  "engine": "Tesseract.js",
+  "privacy": "screenshots-stay-in-browser",
+  "activation": "explicit-user-enabled-only",
+  "accountTruthWritesAllowed": false,
+  "persistentMediaWritesAllowed": false,
+  "reviewRequiredBeforeTruth": true,
+  "regionHintOcr": true,
+  "normalisedGeometryHints": true,
+  "messageTypes": {
+    "request": "TBI_STATIC_TESSERACT_OCR_REQUEST",
+    "response": "TBI_STATIC_TESSERACT_OCR_RESPONSE",
+    "health": "TBI_STATIC_TESSERACT_HEALTH"
+  },
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

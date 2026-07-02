@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <link rel="icon" href="./favicon.ico" sizes="any" />
+
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TBI Static Tesseract OCR Pack</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; }
+    code { background: #f2f2f2; padding: .1rem .3rem; border-radius: .25rem; }
+  </style>
+</head>
+<body>
+  <h1>TBI Static Tesseract OCR Pack</h1>
+  <p>This page is an optional OCR helper for Tower Battle Intel. It only runs when TBI sends an explicit review job.</p>
+  <p>Status: <code id="status">loading</code></p>
+  <script type="module">
+    import * as adapterModule from "./local-ocr-adapter.js";
+
+    const adapter = adapterModule?.default || adapterModule?.adapter || adapterModule?.TBI_LOCAL_OCR_ADAPTER || adapterModule;
+    const status = document.getElementById("status");
+    status.textContent = adapter ? "ready" : "adapter missing";
+
+    const RESPONSE_TYPE = "TBI_STATIC_TESSERACT_OCR_RESPONSE";
+    const REQUEST_TYPE = "TBI_STATIC_TESSERACT_OCR_REQUEST";
+    const HEALTH_TYPE = "TBI_STATIC_TESSERACT_HEALTH";
+
+    function postHealth() {
+      window.parent?.postMessage({ type: HEALTH_TYPE, ok: Boolean(adapter), provider: "static-tesseract-browser-plugin", version: "v4.12r673" }, "*");
+    }
+
+    async function recognise(event) {
+      const message = event.data || {};
+      if (message.type !== REQUEST_TYPE) return;
+      const requestId = String(message.requestId || "");
+      const sourceId = String(message.sourceId || "");
+      let objectUrl = "";
+      try {
+        let previewUrl = message.imageDataUrl || message.previewUrl || "";
+        if (!previewUrl && message.imageBlob instanceof Blob) {
+          objectUrl = URL.createObjectURL(message.imageBlob);
+          previewUrl = objectUrl;
+        }
+        const result = await adapter.previewRawText({
+          source: { id: sourceId, filename: message.filename || "", screenType: message.screenFamily || "", screenLabel: message.screenLabel || "" },
+          previewUrl,
+          geometryPlan: message.geometryPlan || null,
+          regions: Array.isArray(message.regions) ? message.regions : [],
+          expectedLabels: Array.isArray(message.expectedLabels) ? message.expectedLabels : [],
+          catalogueDisambiguationPlan: message.catalogueDisambiguationPlan || null,
+          preprocessHints: Array.isArray(message.preprocessHints) ? message.preprocessHints : [],
+          sourceGeometry: message.sourceGeometry || null,
+          geometryPolicy: message.geometryPolicy || null,
+          mode: "raw-text-preview-only",
+          saveTruth: false,
+          storageWritesAllowed: false,
+          accountTruthWritesAllowed: false
+        });
+        const rawText = typeof result === "string" ? result : (result?.rawText || result?.text || result?.data?.text || "");
+        window.parent?.postMessage({
+          type: RESPONSE_TYPE,
+          ok: true,
+          requestId,
+          sourceId,
+          provider: "static-tesseract-browser-plugin",
+          version: "v4.12r673",
+          rawText,
+          originalRawText: typeof result === "string" ? "" : (result?.originalRawText || ""),
+          regionText: typeof result === "string" ? "" : (result?.regionText || ""),
+          regionResults: typeof result === "string" ? [] : (Array.isArray(result?.regionResults) ? result.regionResults : []),
+          regionStatus: typeof result === "string" ? "string-result" : (result?.regionStatus || ""),
+          bestSource: typeof result === "string" ? "raw" : (result?.bestSource || "raw"),
+          geometryPlan: typeof result === "string" ? null : (result?.geometryPlan || null)
+        }, "*");
+      } catch (error) {
+        window.parent?.postMessage({ type: RESPONSE_TYPE, ok: false, requestId, sourceId, provider: "static-tesseract-browser-plugin", error: String(error?.message || error || "OCR failed") }, "*");
+      } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    }
+
+    window.addEventListener("message", recognise);
+    postHealth();
+  </script>
+</body>
+</html>
